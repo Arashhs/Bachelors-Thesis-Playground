@@ -119,6 +119,24 @@ def is_prone_to_bias(query):
     return False '''
 
 
+def get_target_from_token(token, target_attributes):
+    avg_seen = False
+    for sub_token in token.tokens:
+        if avg_seen:
+            for par_token in sub_token.tokens:
+                if isinstance(par_token, sqlparse.sql.IdentifierList):
+                    for identifier in par_token.get_identifiers():
+                        print("{} {}\n".format("TargetAtt = ", identifier) )
+                        target_attributes.append(identifier.value.lower())
+                elif isinstance(par_token, sqlparse.sql.Identifier):
+                    target_attributes.append(par_token.value.lower())
+                    print("{} {}\n".format("TargetAtt = ", par_token) )
+            avg_seen = False
+        if sub_token.value.upper() == "AVG":
+            avg_seen = True
+    return target_attributes
+
+
 def extract_needed_features(query):
     select_seen, avg_seen, from_seen, group_by_seen = (False, False, False, False)
     target_attributes = []
@@ -130,25 +148,16 @@ def extract_needed_features(query):
         if select_seen:
             if isinstance(token, sqlparse.sql.IdentifierList):
                 for identifier in token.get_identifiers():
+                    if isinstance(identifier, sqlparse.sql.Function):
+                        get_target_from_token(identifier, target_attributes)
+                        continue
                     columns.append(identifier.value.lower())
                     print("{} {}\n".format("Attr = ", identifier) )
             elif isinstance(token, sqlparse.sql.Identifier):
                 columns.append(token.value.lower())
                 print("{} {}\n".format("Attr = ", token))
             elif isinstance(token, sqlparse.sql.Function):
-                for sub_token in token.tokens:
-                    if avg_seen:
-                        for par_token in sub_token.tokens:
-                            if isinstance(par_token, sqlparse.sql.IdentifierList):
-                                for identifier in par_token.get_identifiers():
-                                    print("{} {}\n".format("Attr = ", identifier) )
-                                    target_attributes.append(identifier.value.lower())
-                            elif isinstance(par_token, sqlparse.sql.Identifier):
-                                target_attributes.append(par_token.value.lower())
-                                print("{} {}\n".format("Attr = ", par_token) )
-                        avg_seen = False
-                    if sub_token.value.upper() == "AVG":
-                        avg_seen = True
+                get_target_from_token(token, target_attributes)
         if from_seen:
             if isinstance(token, sqlparse.sql.IdentifierList):
                 for identifier in token.get_identifiers():
