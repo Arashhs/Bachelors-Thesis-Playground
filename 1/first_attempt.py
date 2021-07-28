@@ -12,7 +12,7 @@ db_user = 'root'
 db_pass = ''
 db_host = 'localhost'
 
-bias_degree_threshold = 0.7
+bias_degree_threshold = 0.3
 
 # create SQL tables from CSV dataset
 def init_sql_db(dataset_directory):
@@ -23,7 +23,8 @@ def init_sql_db(dataset_directory):
         mysql_engine.execute(f'CREATE DATABASE IF NOT EXISTS {database_name}')
         mysql_engine = create_engine(f'mysql://{db_user}:{db_pass}@{db_host}/{database_name}')
 
-        df = pd.read_csv(csv_files[i],sep=',',quotechar='\'',encoding='utf8')
+        # df = pd.read_csv(csv_files[i],sep=',',quotechar='\'',encoding='utf8')
+        df = pd.read_csv(csv_files[i])
         df.to_sql(dataset_name,con=mysql_engine,index=False,if_exists='replace')
     return df
 
@@ -67,12 +68,14 @@ def get_groups_avgs(groups, target_attribute):
     return avgs
 
 
+'''
 # get the probability than Simpson's paradox has happened
 def get_paradox_prob(agg_avg, de_agg_avgs):
     first = np.sum([avg > agg_avg for avg in de_agg_avgs])
     second = np.sum([avg < agg_avg for avg in de_agg_avgs])
     num_of_reverses = max(first, second)
     return num_of_reverses/len(de_agg_avgs)
+'''
 
 
 # check if the Simpson's paradox has happened based on two set of groups
@@ -116,7 +119,7 @@ def is_prone_to_bias(query):
     return False '''
 
 
-def is_prone_to_bias(query):
+def extract_needed_features(query):
     select_seen, avg_seen, from_seen, group_by_seen = (False, False, False, False)
     target_attributes = []
     agg_attributes = []
@@ -127,10 +130,10 @@ def is_prone_to_bias(query):
         if select_seen:
             if isinstance(token, sqlparse.sql.IdentifierList):
                 for identifier in token.get_identifiers():
-                    columns.append(identifier.value)
+                    columns.append(identifier.value.lower())
                     print("{} {}\n".format("Attr = ", identifier) )
             elif isinstance(token, sqlparse.sql.Identifier):
-                columns.append(token.value)
+                columns.append(token.value.lower())
                 print("{} {}\n".format("Attr = ", token))
             elif isinstance(token, sqlparse.sql.Function):
                 for sub_token in token.tokens:
@@ -139,9 +142,9 @@ def is_prone_to_bias(query):
                             if isinstance(par_token, sqlparse.sql.IdentifierList):
                                 for identifier in par_token.get_identifiers():
                                     print("{} {}\n".format("Attr = ", identifier) )
-                                    target_attributes.append(identifier.value)
+                                    target_attributes.append(identifier.value.lower())
                             elif isinstance(par_token, sqlparse.sql.Identifier):
-                                target_attributes.append(par_token.value)
+                                target_attributes.append(par_token.value.lower())
                                 print("{} {}\n".format("Attr = ", par_token) )
                         avg_seen = False
                     if sub_token.value.upper() == "AVG":
@@ -149,18 +152,18 @@ def is_prone_to_bias(query):
         if from_seen:
             if isinstance(token, sqlparse.sql.IdentifierList):
                 for identifier in token.get_identifiers():
-                    tables.append(identifier.value)
+                    tables.append(identifier.value.lower())
                     print("{} {}\n".format("TAB = ", identifier) )
             elif isinstance(token, sqlparse.sql.Identifier):
-                tables.append(token.value)
+                tables.append(token.value.lower())
                 print("{} {}\n".format("TAB = ", token))
         if group_by_seen:
             if isinstance(token, sqlparse.sql.IdentifierList):
                 for identifier in token.get_identifiers():
-                    agg_attributes.append(identifier.value)
+                    agg_attributes.append(identifier.value.lower())
                     print("{} {}\n".format("GROUPBY att = ", identifier) )
             elif isinstance(token, sqlparse.sql.Identifier):
-                agg_attributes.append(token.value)
+                agg_attributes.append(token.value.lower())
                 print("{} {}\n".format("GROUPBY att = ", token))
             
         if token.ttype is sqlparse.tokens.Keyword and token.value.upper() == "GROUP BY":
@@ -176,24 +179,29 @@ def is_prone_to_bias(query):
             from_seen = False
             group_by_seen = False
         
-        if len(agg_attributes) != 0 and len(target_attributes) != 0:
-            return target_attributes, tables, agg_attributes, columns
-        return False
+    return target_attributes, tables, agg_attributes, columns
 
 
 # Check whether Simpson's paradox is present and correct it if present
-def detect_and_correct_execute(query):
-    pass
+def detect_and_correct_execute(query, sql_engine, target_attributes, tables, agg_attributes, columns):
+    df = pd.read_sql_table(tables[0], sql_engine)
+    df.columns = df.columns.str.lower()
+    for test_attribute in df.columns:
+        if test_attribute not in agg_attributes and test_attribute not in target_attributes:
+            print(test_attribute, check_for_bias(df, agg_attributes[0], test_attribute, target_attributes[0]))
+
 
 # process query, detect and correct Simpson's paradox if present
 def process_query(query, sql_engine):
-    if is_prone_to_bias(query):
-        detect_and_correct_execute(query)
+    target_attributes, tables, agg_attributes, columns = extract_needed_features(query)
+    if len(target_attributes) > 0 and len(agg_attributes) > 0:
+        detect_and_correct_execute(query, sql_engine, target_attributes, tables, agg_attributes, columns)
     else:
         sql_engine.execute(query)
 
 
 def main():
+    mysql_engine = create_engine(f'mysql://{db_user}:{db_pass}@{db_host}/{database_name}')
     print("1- Initialize SQL-database tables from CSV datasets")
     option = input('Select option: ')
     if option == '1':
@@ -201,7 +209,7 @@ def main():
     elif option == '2':
         query = input('Query: ')
         # query = 'SELECT avg(admit) from admissions_data GROUP BY Gender'
-        print(is_prone_to_bias(query))
+        print(process_query(query, mysql_engine))
     # check_for_bias(df, 'Treated', 'Treated', 'Survived')
     # check_for_avg_reverse(df, 'Gender', 'Dept', 'Admit')
     # check_for_avg_reverse(df, 'player', 'year', 'outcome')
