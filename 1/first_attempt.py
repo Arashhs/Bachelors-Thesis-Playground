@@ -191,9 +191,39 @@ def extract_needed_features(query):
     return target_attributes, tables, agg_attributes, columns
 
 
+# Only hold essential parts of query for retreiving dataframe
+def preprocess_query(query):
+    unwanted_keywords = ['SELECT', 'GROUP', 'ORDER', 'HAVING']
+    seen_unwanted = False
+    formatted_query = sqlparse.format(query, reindent=True, keyword_case='upper')
+    sql_lines = formatted_query.split('\n')
+    manipulated_sql = 'SELECT *'
+    for line in sql_lines:
+        if line.startswith((' ', '\t')):
+            print(f'param-line: {line}')
+            print(f"parameter: {line.strip().replace(r',', '')}")
+            print()
+        else:
+            print(f'Statement: {line}')
+            splitted_stmt = line.split()
+            keyword = splitted_stmt[0]
+            if keyword.upper() in unwanted_keywords:
+                seen_unwanted = True
+            else:
+                seen_unwanted  = False
+            print(f'Keyword: {splitted_stmt[0]}')
+            print(f"Param: {splitted_stmt[1].strip().replace(r',', '')}")
+            print()
+        
+        if not seen_unwanted:
+            manipulated_sql += '\n' + line
+    print(f'manipulated_sql: {manipulated_sql}')
+    return manipulated_sql
+
+
 # Check whether Simpson's paradox is present and correct it if present
 def detect_and_correct_execute(query, sql_engine, target_attributes, tables, agg_attributes, columns):
-    df = pd.read_sql_table(tables[0], sql_engine)
+    df = pd.read_sql(preprocess_query(query), sql_engine)
     df.columns = df.columns.str.lower()
     for test_attribute in df.columns:
         if test_attribute not in agg_attributes and test_attribute not in target_attributes:
