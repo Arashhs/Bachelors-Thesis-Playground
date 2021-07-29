@@ -3,6 +3,7 @@ import math
 import re
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from sqlalchemy import create_engine, types
 import sqlparse
 
@@ -94,13 +95,15 @@ def is_biased(first_gp_avgs, second_gp_avgs):
             current_count += np.sum([second_gp_avgs[agg_att_val, test_att_val] >= second_gp_avgs[val, test_att_val] for val in agg_attribute_vals if (val, test_att_val) in second_gp_avgs]) - 1
         test_bigger_num.append(current_count)
     bias_degree = get_bias_degree(agg_bigger_num, test_bigger_num)
+    if np.all(np.array(test_bigger_num) == 0):
+        bias_degree = 0
     # if test_bigget_num is all zeroes or the bias degree is lower than the threshold, return False
-    if np.all(np.array(test_bigger_num) == 0) or bias_degree < bias_degree_threshold:
-        return False
-    return True
+    if bias_degree < bias_degree_threshold:
+        return False, bias_degree
+    return True, bias_degree
 
 
-# Check if the averages of target attribute reverse if we de-aggregate data using test_attribute
+# Check if the averages of target attribute reverse if we disaggregate data using test_attribute
 def check_for_bias(dataframe, agg_attribute, test_attribute, target_attribute):
     first_groups, first_att_vals = get_groups(dataframe, [agg_attribute])
     second_groups, second_att_vals  = get_groups(dataframe, [agg_attribute, test_attribute])
@@ -221,22 +224,72 @@ def preprocess_query(query):
     return manipulated_sql
 
 
+# correct the biased query by disaggregating by a candidate attribute
+def correct_query(query, disaggregated_att):
+    target_keywords = ['SELECT', 'GROUP']
+    seen_target = False
+    formatted_query = sqlparse.format(query, reindent=True, keyword_case='upper')
+    sql_lines = formatted_query.split('\n')
+    corrected_query = ''
+    for line in sql_lines:
+        if line.startswith((' ', '\t')):
+            print(f'param-line: {line}')
+            print(f"parameter: {line.strip().replace(r',', '')}")
+            print()
+        else:
+            if seen_target:
+                corrected_query += f', `{disaggregated_att}`'
+            print(f'Statement: {line}')
+            splitted_stmt = line.split()
+            keyword = splitted_stmt[0]
+            if keyword.upper() in target_keywords:
+                seen_target = True
+            else:
+                seen_target  = False
+            print(f'Keyword: {splitted_stmt[0]}')
+            print(f"Param: {splitted_stmt[1].strip().replace(r',', '')}")
+            print()
+        corrected_query += '\n' + line
+    if seen_target:
+        corrected_query += f', `{disaggregated_att}`'
+    corrected_query = sqlparse.format(corrected_query, reindent=True, keyword_case='upper')
+    print(f'manipulated_sql: {corrected_query}')
+    return corrected_query
+
+
 # Check whether Simpson's paradox is present and correct it if present
-def detect_and_correct_execute(query, sql_engine, target_attributes, tables, agg_attributes, columns):
+def detect_and_correct_query_bias(query, sql_engine, target_attributes, tables, agg_attributes, columns):
     df = pd.read_sql(preprocess_query(query), sql_engine)
     df.columns = df.columns.str.lower()
+    biased_degrees_dict = dict()
+    unbiased_degrees_dict = dict()
     for test_attribute in df.columns:
         if test_attribute not in agg_attributes and test_attribute not in target_attributes:
-            print(test_attribute, check_for_bias(df, agg_attributes[0], test_attribute, target_attributes[0]))
+            is_query_biased, bias_degree = check_for_bias(df, agg_attributes[0], test_attribute, target_attributes[0])
+            print(test_attribute, is_query_biased, bias_degree)
+            if is_query_biased:
+                biased_degrees_dict[test_attribute] = bias_degree
+            else:
+                unbiased_degrees_dict[test_attribute] = bias_degree
+    if len(biased_degrees_dict) > 0:
+        # Query was biased
+        # Select the attribute for which the bias degree was highest
+        best_test_att, highest_bias_degree = max(biased_degrees_dict.items(), key=lambda v: v[1])
+        corrected_query = correct_query(query, best_test_att)
+        plot_query_results(query, corrected_query, sql_engine)
+        return corrected_query
+    else:
+        # Query was unbiased
+        return query
 
 
 # process query, detect and correct Simpson's paradox if present
 def process_query(query, sql_engine):
     target_attributes, tables, agg_attributes, columns = extract_needed_features(query)
     if len(target_attributes) > 0 and len(agg_attributes) > 0:
-        detect_and_correct_execute(query, sql_engine, target_attributes, tables, agg_attributes, columns)
+        return detect_and_correct_query_bias(query, sql_engine, target_attributes, tables, agg_attributes, columns)
     else:
-        sql_engine.execute(query)
+        return query
 
 
 def main():
@@ -252,6 +305,17 @@ def main():
     # check_for_bias(df, 'Treated', 'Treated', 'Survived')
     # check_for_avg_reverse(df, 'Gender', 'Dept', 'Admit')
     # check_for_avg_reverse(df, 'player', 'year', 'outcome')
+    plt.show()
+
+
+def plot_query_results(query, corrected_query, sql_engine):
+    df_biased = pd.read_sql(query, sql_engine)
+    df_corrected = pd.read_sql(corrected_query, sql_engine)
+    df_biased.plot.bar()
+    df_corrected.plot.bar()
+    ax = df_corrected[['V1','V2']].plot(kind='bar', title ="V comp", figsize=(15, 10), legend=True, fontsize=12)
+
+
 
 
 
