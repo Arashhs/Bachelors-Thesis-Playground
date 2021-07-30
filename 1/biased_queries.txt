@@ -1,0 +1,9 @@
+SELECT `Treated`, AVG(Survived) FROM `sp_data` group by Treated
+
+SELECT Ethnicity, AVG(Expenditures) FROM `california_dds_data` WHERE Ethnicity in ('White not Hispanic', 'Hispanic') GROUP by Ethnicity order by Ethnicity
+
+SELECT Gender, AVG(Admit) FROM `admissions_data` GROUP by Gender ORDER BY AVG(Admit)
+
+SELECT player, AVG(outcome) from baseball_data GROUP by player
+
+SELECT HoursWorked, AVG(Income) FROM `census_modified` group by HoursWorked

@@ -276,7 +276,7 @@ def detect_and_correct_query_bias(query, sql_engine, target_attributes, tables, 
         # Select the attribute for which the bias degree was highest
         best_test_att, highest_bias_degree = max(biased_degrees_dict.items(), key=lambda v: v[1])
         corrected_query = correct_query(query, best_test_att)
-        plot_query_results(query, corrected_query, sql_engine)
+        plot_query_results(query, corrected_query, sql_engine, agg_attributes[0], best_test_att, target_attributes[0])
         return corrected_query
     else:
         # Query was unbiased
@@ -308,12 +308,31 @@ def main():
     plt.show()
 
 
-def plot_query_results(query, corrected_query, sql_engine):
+def plot_query_results(query, corrected_query, sql_engine, agg_att, disagg_att, target_att):
     df_biased = pd.read_sql(query, sql_engine)
+    df_biased.columns = df_biased.columns.str.lower()
     df_corrected = pd.read_sql(corrected_query, sql_engine)
-    df_biased.plot.bar()
-    df_corrected.plot.bar()
-    ax = df_corrected[['V1','V2']].plot(kind='bar', title ="V comp", figsize=(15, 10), legend=True, fontsize=12)
+    df_corrected.columns = df_corrected.columns.str.lower()
+    # plotting biased query results
+    ax = df_biased.groupby([agg_att])['avg(%s)' % target_att].apply(float).plot(kind='bar', rot=1, legend=False, color=['C0', 'C1', 'C2', 'C3', 'C4'])
+    plt.title('Biased Query Results', fontsize=16, fontweight='bold')
+    plt.xlabel(f'{agg_att.capitalize()}', fontsize=14)
+    plt.ylabel(f'AVG({target_att.capitalize()})', fontsize=14)
+    # annotating the chart
+    for p in ax.patches:
+        # ax.annotate(str(p.get_height()), (p.get_x() * 1.005, p.get_height() * 1.005))
+        ax.annotate("%.3f" % p.get_height(), (p.get_x() + p.get_width() / 2., p.get_height()), ha='center', va='center', xytext=(0, 10), textcoords='offset points')
+
+    # plotting corrected query results
+    ax = df_corrected.groupby([disagg_att, agg_att])['avg(%s)' % target_att].apply(float).unstack().plot(kind='bar', rot=1)
+    plt.title('Corrected Query Results', fontsize=16, fontweight='bold')
+    plt.xlabel(f'{disagg_att.capitalize()}', fontsize=14)
+    plt.ylabel(f'AVG({target_att.capitalize()})', fontsize=14)
+    # annotating the chart
+    for p in ax.patches:
+        # ax.annotate(str(p.get_height()), (p.get_x() * 1.005, p.get_height() * 1.005))
+        ax.annotate("%.3f" % p.get_height(), (p.get_x() + p.get_width() / 2., p.get_height()), ha='center', va='center', xytext=(0, 10), textcoords='offset points')
+
 
 
 
