@@ -4,8 +4,11 @@ import re
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from pandas.core.arrays import categorical
 from sqlalchemy import create_engine, types
+from sklearn.preprocessing import OrdinalEncoder
 import sqlparse
+
 
 dataset_dir = 'dataset'
 database_name = 'simpson_database'
@@ -28,6 +31,14 @@ def init_sql_db(dataset_directory):
         df = pd.read_csv(csv_files[i])
         df.to_sql(dataset_name,con=mysql_engine,index=False,if_exists='replace')
     return df
+
+
+# encode dataset with categorical data
+def encode_categorical_cols(df):
+    categorical_cols = [col for col in df.columns if df[col].dtype=="O"]
+    for cat_col in categorical_cols:
+        df[cat_col] = df[cat_col].astype('category').cat.codes
+    return df, categorical_cols
 
 
 # getting normalized of a vector
@@ -286,33 +297,36 @@ def detect_and_correct_query_bias(query, sql_engine, target_attributes, tables, 
 # process query, detect and correct Simpson's paradox if present
 def process_query(query, sql_engine):
     target_attributes, tables, agg_attributes, columns = extract_needed_features(query)
+    target_attributes = [att.replace('`', '') for att in target_attributes]
+    tables = [table.replace('`', '') for table in tables]
+    agg_attributes = [att.replace('`', '') for att in agg_attributes]
+    columns = [att.replace('`', '') for att in columns]
     if len(target_attributes) > 0 and len(agg_attributes) > 0:
         return detect_and_correct_query_bias(query, sql_engine, target_attributes, tables, agg_attributes, columns)
     else:
         return query
 
 
-def main():
-    mysql_engine = create_engine(f'mysql://{db_user}:{db_pass}@{db_host}/{database_name}')
-    print("1- Initialize SQL-database tables from CSV datasets")
-    option = input('Select option: ')
-    if option == '1':
-        init_sql_db(dataset_dir)
-    elif option == '2':
-        query = input('Query: ')
-        # query = 'SELECT avg(admit) from admissions_data GROUP BY Gender'
-        print(process_query(query, mysql_engine))
-    # check_for_bias(df, 'Treated', 'Treated', 'Survived')
-    # check_for_avg_reverse(df, 'Gender', 'Dept', 'Admit')
-    # check_for_avg_reverse(df, 'player', 'year', 'outcome')
-    plt.show()
+# analyse dataset to see if Simpson's paradox is present
+def analyse_dataset(query, sql_engine):
+    df = pd.read_sql(preprocess_query(query), sql_engine)
+    df, categorical_cols = encode_categorical_cols(df)
+    for target_att in (set(df.columns) - set(categorical_cols)):
+        for agg_att in df.columns:
+            if agg_att != target_att:
+                for test_att in df.columns:
+                    if (test_att != target_att) and (test_att != agg_att):
+                        biased, score = check_for_bias(df, agg_att, test_att, target_att)
+                        if biased:
+                            print(check_for_bias(df, agg_att, test_att, target_att), f"target:{target_att}, agg:{agg_att}, test:{test_att}")
+
 
 
 def plot_query_results(query, corrected_query, sql_engine, agg_att, disagg_att, target_att):
     df_biased = pd.read_sql(query, sql_engine)
-    df_biased.columns = df_biased.columns.str.lower()
+    df_biased.columns = df_biased.columns.str.lower().str.replace('`', '')
     df_corrected = pd.read_sql(corrected_query, sql_engine)
-    df_corrected.columns = df_corrected.columns.str.lower()
+    df_corrected.columns = df_corrected.columns.str.lower().str.replace('`', '')
     # plotting biased query results
     ax = df_biased.groupby([agg_att])['avg(%s)' % target_att].apply(float).plot(kind='bar', rot=1, legend=False, color=['C0', 'C1', 'C2', 'C3', 'C4'])
     plt.title('Biased Query Results', fontsize=16, fontweight='bold')
@@ -334,7 +348,24 @@ def plot_query_results(query, corrected_query, sql_engine, agg_att, disagg_att, 
         ax.annotate("%.3f" % p.get_height(), (p.get_x() + p.get_width() / 2., p.get_height()), ha='center', va='center', xytext=(0, 10), textcoords='offset points')
 
 
-
+def main():
+    mysql_engine = create_engine(f'mysql://{db_user}:{db_pass}@{db_host}/{database_name}')
+    print("1- Initialize SQL-database tables from CSV datasets")
+    option = input('Select option: ')
+    if option == '1':
+        init_sql_db(dataset_dir)
+    elif option == '2':
+        query = input('Query: ')
+        # query = 'SELECT avg(admit) from admissions_data GROUP BY Gender'
+        print(process_query(query, mysql_engine))
+    elif option == '3':
+        query = input('Query: ')
+        # query = 'SELECT avg(admit) from admissions_data GROUP BY Gender'
+        analyse_dataset(query, mysql_engine)
+    # check_for_bias(df, 'Treated', 'Treated', 'Survived')
+    # check_for_avg_reverse(df, 'Gender', 'Dept', 'Admit')
+    # check_for_avg_reverse(df, 'player', 'year', 'outcome')
+    plt.show()
 
 
 
