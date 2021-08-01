@@ -1,13 +1,19 @@
 import os
 import math
 import re
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pandas.core.arrays import categorical
 from sqlalchemy import create_engine, types
 from sklearn.preprocessing import OrdinalEncoder
+from sklearn.linear_model import LogisticRegression
+
+import statsmodels.api as sm
+import seaborn as sns
 import sqlparse
+
 
 
 dataset_dir = 'dataset'
@@ -17,6 +23,7 @@ db_pass = ''
 db_host = 'localhost'
 
 bias_degree_threshold = 0.3
+groups_num_threshold = 50
 
 # create SQL tables from CSV dataset
 def init_sql_db(dataset_directory):
@@ -275,7 +282,7 @@ def detect_and_correct_query_bias(query, sql_engine, target_attributes, tables, 
     biased_degrees_dict = dict()
     unbiased_degrees_dict = dict()
     for test_attribute in df.columns:
-        if test_attribute not in agg_attributes and test_attribute not in target_attributes:
+        if test_attribute not in agg_attributes and test_attribute not in target_attributes and len(df[test_attribute].unique()) < groups_num_threshold:
             is_query_biased, bias_degree = check_for_bias(df, agg_attributes[0], test_attribute, target_attributes[0])
             print(test_attribute, is_query_biased, bias_degree)
             if is_query_biased:
@@ -348,6 +355,89 @@ def plot_query_results(query, corrected_query, sql_engine, agg_att, disagg_att, 
         ax.annotate("%.3f" % p.get_height(), (p.get_x() + p.get_width() / 2., p.get_height()), ha='center', va='center', xytext=(0, 10), textcoords='offset points')
 
 
+############ THE SECOND METHOD - USING REGRESSION ############
+# process query, detect and correct Simpson's paradox using regression models if present
+def process_query_regression(query, sql_engine):
+    target_attributes, tables, agg_attributes, columns = extract_needed_features(query)
+    target_attributes = [att.replace('`', '') for att in target_attributes]
+    tables = [table.replace('`', '') for table in tables]
+    agg_attributes = [att.replace('`', '') for att in agg_attributes]
+    columns = [att.replace('`', '') for att in columns]
+    if len(target_attributes) > 0 and len(agg_attributes) > 0:
+        return detect_and_correct_query_bias_regression(query, sql_engine, target_attributes, tables, agg_attributes, columns)
+    else:
+        return query
+
+
+# Check whether Simpson's paradox is present and correct it using regression models if present
+def detect_and_correct_query_bias_regression(query, sql_engine, target_attributes, tables, agg_attributes, columns):
+    df = pd.read_sql(preprocess_query(query), sql_engine)
+    build_regression_models(df, target_attributes[0], agg_attributes[0])
+    '''df.columns = df.columns.str.lower()
+    biased_degrees_dict = dict()
+    unbiased_degrees_dict = dict()
+    for test_attribute in df.columns:
+        if test_attribute not in agg_attributes and test_attribute not in target_attributes:
+            is_query_biased, bias_degree = check_for_bias(df, agg_attributes[0], test_attribute, target_attributes[0])
+            print(test_attribute, is_query_biased, bias_degree)
+            if is_query_biased:
+                biased_degrees_dict[test_attribute] = bias_degree
+            else:
+                unbiased_degrees_dict[test_attribute] = bias_degree
+    if len(biased_degrees_dict) > 0:
+        # Query was biased
+        # Select the attribute for which the bias degree was highest
+        best_test_att, highest_bias_degree = max(biased_degrees_dict.items(), key=lambda v: v[1])
+        corrected_query = correct_query(query, best_test_att)
+        plot_query_results(query, corrected_query, sql_engine, agg_attributes[0], best_test_att, target_attributes[0])
+        return corrected_query
+    else:
+        # Query was unbiased
+        return query'''
+
+# build a regression model and return parameters
+def build_regression_model(data, response_feature, predictor_feature):
+    Y = data[response_feature]
+    X = data[predictor_feature]
+    X = sm.add_constant(X)
+    result = sm.OLS(Y, X).fit()
+    return result.params
+
+
+# build a logistic regression model and return parameters
+def build_logistic_regression_model(data, response_feature, predictor_feature, categorical_cols):
+    Y = data[response_feature]
+    X = data[predictor_feature]
+    if predictor_feature in categorical_cols:
+        X = pd.get_dummies(X)
+    if len(X) < 2:
+        return
+    result = LogisticRegression(random_state=0).fit(X, Y)
+    return result.coef_
+
+
+
+# build a regression model using given inputs
+def build_regression_models(df, response_feature, predictor_feature):
+    df, categorical_cols = encode_categorical_cols(df)
+    # categorical_cols = [col for col in df.columns if df[col].dtype=="O"]
+    # categorical_cols = [col.lower() for col in categorical_cols]
+    df.columns = df.columns.str.lower()
+    current_slope = build_regression_model(df, response_feature, predictor_feature)
+    # current_coefs = build_logistic_regression_model(df, response_feature, predictor_feature, categorical_cols)
+    print(f"current: {current_slope}")
+    # print(f"current_coefs: {current_coefs}")
+    for group_feature in df.columns:
+        if group_feature != response_feature and group_feature != predictor_feature and len(df[group_feature].unique()) < groups_num_threshold:
+            grouped_slopes = df.groupby(group_feature).apply(build_regression_model, response_feature, predictor_feature)
+            # grouped_coefs = df.groupby(group_feature).apply(build_logistic_regression_model, response_feature, predictor_feature, categorical_cols)
+            print(f"grouped_slopes: {grouped_slopes}")
+            # print(f"grouped_slopes: {grouped_coefs}")
+    # sns.regplot(x=predictor_feature, y=response_feature, data=df)
+
+
+
+
 def main():
     mysql_engine = create_engine(f'mysql://{db_user}:{db_pass}@{db_host}/{database_name}')
     print("1- Initialize SQL-database tables from CSV datasets")
@@ -362,6 +452,10 @@ def main():
         query = input('Query: ')
         # query = 'SELECT avg(admit) from admissions_data GROUP BY Gender'
         analyse_dataset(query, mysql_engine)
+    elif option == '4':
+        query = input('Query: ')
+        # query = 'SELECT avg(admit) from admissions_data GROUP BY Gender'
+        print(process_query_regression(query, mysql_engine))
     # check_for_bias(df, 'Treated', 'Treated', 'Survived')
     # check_for_avg_reverse(df, 'Gender', 'Dept', 'Admit')
     # check_for_avg_reverse(df, 'player', 'year', 'outcome')

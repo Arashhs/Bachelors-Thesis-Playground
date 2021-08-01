@@ -7,3 +7,7 @@ SELECT Gender, AVG(Admit) FROM `admissions_data` GROUP by Gender ORDER BY AVG(Ad
 SELECT player, AVG(outcome) from baseball_data GROUP by player
 
 SELECT HoursWorked, AVG(Income) FROM `census_modified` group by HoursWorked
+
+SELECT AVG(success), treatment from kidney_stone_data GROUP BY treatment
+
+select avg(`Confirmed fatalities`), Country from covid19_dataset where Country in ('China', 'Switzerland') group by Country
