@@ -9,6 +9,7 @@ from pandas.core.arrays import categorical
 from sqlalchemy import create_engine, types
 from sklearn.preprocessing import OrdinalEncoder
 from sklearn.linear_model import LogisticRegression
+import cvxopt
 
 import statsmodels.api as sm
 import seaborn as sns
@@ -23,7 +24,7 @@ db_pass = ''
 db_host = 'localhost'
 
 bias_degree_threshold = 0.3
-groups_num_threshold = 50
+groups_num_threshold = 100
 
 # create SQL tables from CSV dataset
 def init_sql_db(dataset_directory):
@@ -335,7 +336,7 @@ def plot_query_results(query, corrected_query, sql_engine, agg_att, disagg_att, 
     df_corrected = pd.read_sql(corrected_query, sql_engine)
     df_corrected.columns = df_corrected.columns.str.lower().str.replace('`', '')
     # plotting biased query results
-    ax = df_biased.groupby([agg_att])['avg(%s)' % target_att].apply(float).plot(kind='bar', rot=1, legend=False, color=['C0', 'C1', 'C2', 'C3', 'C4'])
+    ax = df_biased.groupby([agg_att])['avg(%s)' % target_att].apply(float).plot(kind='bar', rot=1, legend=False, color=['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9'])
     plt.title('Biased Query Results', fontsize=16, fontweight='bold')
     plt.xlabel(f'{agg_att.capitalize()}', fontsize=14)
     plt.ylabel(f'AVG({target_att.capitalize()})', fontsize=14)
@@ -433,7 +434,7 @@ def build_regression_models(df, response_feature, predictor_feature):
             # grouped_coefs = df.groupby(group_feature).apply(build_logistic_regression_model, response_feature, predictor_feature, categorical_cols)
             print(f"grouped_slopes: {grouped_slopes}")
             # print(f"grouped_slopes: {grouped_coefs}")
-    # sns.regplot(x=predictor_feature, y=response_feature, data=df)
+    sns.regplot(x=predictor_feature, y=response_feature, data=df)
 
 
 
