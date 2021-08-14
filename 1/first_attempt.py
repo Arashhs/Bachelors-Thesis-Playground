@@ -98,28 +98,41 @@ def get_paradox_prob(agg_avg, de_agg_avgs):
 '''
 
 
+# add key-pairs with the the value 0 if key-pair does not exist in dict
+def augment_zeroes(group_avgs, agg_vals, test_vals):
+    for test_val in test_vals:
+        for agg_val in agg_vals:
+            if (agg_val, test_val) not in group_avgs:
+                group_avgs[agg_val, test_val] = 0
+    return group_avgs
+
+
 # check if the Simpson's paradox has happened based on two set of groups
 def is_biased(first_gp_avgs, second_gp_avgs):
     agg_attribute_vals = list(first_gp_avgs.keys())
     test_attribute_vals = np.unique([val[1] for val in second_gp_avgs.keys()])
+    second_gp_avgs = augment_zeroes(second_gp_avgs, agg_attribute_vals, test_attribute_vals)
     agg_bigger_num = []
     test_bigger_num = []
     for agg_att_val in agg_attribute_vals:
 	    agg_bigger_num.append((np.sum([first_gp_avgs[agg_att_val] >= first_gp_avgs[val] for val in agg_attribute_vals]) - 1))
-    for agg_att_val in agg_attribute_vals:
-        current_count = 0
-        for test_att_val in test_attribute_vals:
-            if (agg_att_val, test_att_val) not in second_gp_avgs:
-                continue
-            current_count += np.sum([second_gp_avgs[agg_att_val, test_att_val] >= second_gp_avgs[val, test_att_val] for val in agg_attribute_vals if (val, test_att_val) in second_gp_avgs]) - 1
-        test_bigger_num.append(current_count)
-    bias_degree = get_bias_degree(agg_bigger_num, test_bigger_num)
-    if np.all(np.array(test_bigger_num) == 0):
-        bias_degree = 0
+    test_bigger_num = 0 * np.array(agg_bigger_num)
+    for test_att_val in test_attribute_vals:
+        current_vec = []
+        for agg_att_val in agg_attribute_vals:
+            current_vec.append((np.sum([second_gp_avgs[agg_att_val, test_att_val] >= second_gp_avgs[val, test_att_val] for val in agg_attribute_vals]) - 1))
+        test_bigger_num = np.add(test_bigger_num, current_vec)
+    test_bigger_num = list(test_bigger_num)
+    # bias_degree = get_bias_degree(agg_bigger_num, test_bigger_num)
+    # if np.all(np.array(test_bigger_num) == 0):
+    #     bias_degree = 0
     # if test_bigget_num is all zeroes or the bias degree is lower than the threshold, return False
-    if bias_degree < bias_degree_threshold:
-        return False, bias_degree
-    return True, bias_degree
+    # if bias_degree < bias_degree_threshold:
+    #     return False, bias_degree
+    # return True, bias_degree
+    is_biased, bias_degree = check_if_biased(agg_bigger_num, test_bigger_num)
+    return is_biased, bias_degree
+
 
 
 # Check if the averages of target attribute reverse if we disaggregate data using test_attribute
@@ -373,36 +386,35 @@ def process_query_regression(query, sql_engine):
 # Check whether Simpson's paradox is present and correct it using regression models if present
 def detect_and_correct_query_bias_regression(query, sql_engine, target_attributes, tables, agg_attributes, columns):
     df = pd.read_sql(preprocess_query(query), sql_engine)
-    build_regression_models(df, target_attributes[0], agg_attributes[0])
-    '''df.columns = df.columns.str.lower()
-    biased_degrees_dict = dict()
-    unbiased_degrees_dict = dict()
-    for test_attribute in df.columns:
-        if test_attribute not in agg_attributes and test_attribute not in target_attributes:
-            is_query_biased, bias_degree = check_for_bias(df, agg_attributes[0], test_attribute, target_attributes[0])
-            print(test_attribute, is_query_biased, bias_degree)
-            if is_query_biased:
-                biased_degrees_dict[test_attribute] = bias_degree
-            else:
-                unbiased_degrees_dict[test_attribute] = bias_degree
+    biased_degrees_dict, unbiased_degrees_dict = build_regression_models(df, target_attributes[0], agg_attributes[0])
     if len(biased_degrees_dict) > 0:
         # Query was biased
         # Select the attribute for which the bias degree was highest
         best_test_att, highest_bias_degree = max(biased_degrees_dict.items(), key=lambda v: v[1])
         corrected_query = correct_query(query, best_test_att)
         plot_query_results(query, corrected_query, sql_engine, agg_attributes[0], best_test_att, target_attributes[0])
+        plot_reg_results(df, target_attributes[0], agg_attributes[0], best_test_att)
         return corrected_query
     else:
         # Query was unbiased
-        return query'''
+        return query
+
 
 # build a regression model and return parameters
 def build_regression_model(data, response_feature, predictor_feature):
     Y = data[response_feature]
     X = data[predictor_feature]
     X = sm.add_constant(X)
-    result = sm.OLS(Y, X).fit()
-    return result.params
+    model = sm.OLS(Y, X).fit()
+    params = model.params
+
+    # plot
+    # x_values = np.arange(data[predictor_feature].min(), data[predictor_feature].max() + 0.5, 0.5)
+    # scatter-plot data
+    # ax = data.plot(x=predictor_feature, y=response_feature, kind='scatter')
+    # plot regression line on the same axes, set x-axis limits
+    # ax.plot(x_values, params.const + params[predictor_feature] * x_values)
+    return params
 
 
 # build a logistic regression model and return parameters
@@ -417,6 +429,29 @@ def build_logistic_regression_model(data, response_feature, predictor_feature, c
     return result.coef_
 
 
+# build representation vector from regression model
+def build_reg_represent_vector(slopes, predictor_feature):
+    vec = [0, 0]
+    for slope in slopes:
+        predictor_slope = slope[predictor_feature]
+        if predictor_slope >= 0:
+            vec[0] += 1
+        else:
+            vec[1] += 1
+    return vec
+
+
+# check if the regression representations v1 and v2 suggest biased query
+def check_if_biased(v1, v2):
+    ind_1 = v1.index(max(v1))
+    ind_2 = v2.index(max(v2))
+    bias_degree = get_bias_degree(v1, v2)
+    if ind_1 != ind_2 and not np.all(np.array(v2) == 0):
+        return True, bias_degree
+    return False, bias_degree
+
+
+
 
 # build a regression model using given inputs
 def build_regression_models(df, response_feature, predictor_feature):
@@ -424,18 +459,54 @@ def build_regression_models(df, response_feature, predictor_feature):
     # categorical_cols = [col for col in df.columns if df[col].dtype=="O"]
     # categorical_cols = [col.lower() for col in categorical_cols]
     df.columns = df.columns.str.lower()
-    current_slope = build_regression_model(df, response_feature, predictor_feature)
+    current_slopes = build_regression_model(df, response_feature, predictor_feature)
+    v1 = [1, 0] if current_slopes[predictor_feature] >= 0 else [0, 1]
     # current_coefs = build_logistic_regression_model(df, response_feature, predictor_feature, categorical_cols)
-    print(f"current: {current_slope}")
+    # print(f"current: {current_slopes}")
     # print(f"current_coefs: {current_coefs}")
+    grouped_slopes_dict = dict()
     for group_feature in df.columns:
         if group_feature != response_feature and group_feature != predictor_feature and len(df[group_feature].unique()) < groups_num_threshold:
-            grouped_slopes = df.groupby(group_feature).apply(build_regression_model, response_feature, predictor_feature)
+            slopes = []
+            data_groups, _ = get_groups(df, group_feature)
+            for data_group in data_groups:
+                slopes.append(build_regression_model(data_group, response_feature, predictor_feature))
+                # sns.regplot(x=predictor_feature, y=response_feature, data=data_group)
+            # grouped_slopes = df.groupby(group_feature).apply(build_regression_model, response_feature, predictor_feature)
             # grouped_coefs = df.groupby(group_feature).apply(build_logistic_regression_model, response_feature, predictor_feature, categorical_cols)
-            print(f"grouped_slopes: {grouped_slopes}")
+            # print(f"slopes: {slopes}")
             # print(f"grouped_slopes: {grouped_coefs}")
-    sns.regplot(x=predictor_feature, y=response_feature, data=df)
+            grouped_slopes_dict[group_feature] = slopes
+    
+    # build vector representations and check if biased
+    biased_degrees_dict = dict()
+    unbiased_degrees_dict = dict()
+    for group_feature, slopes in grouped_slopes_dict.items():
+        v2 = build_reg_represent_vector(slopes, predictor_feature)
+        is_biased, bias_degree = check_if_biased(v1, v2)
+        if is_biased:
+            biased_degrees_dict[group_feature] = bias_degree
+        else:
+            unbiased_degrees_dict[group_feature] = bias_degree
+    # sns.regplot(x=predictor_feature, y=response_feature, data=df)
+    print(biased_degrees_dict)
+    return biased_degrees_dict, unbiased_degrees_dict
 
+
+# plot the regression results
+def plot_reg_results(df, response_feature, predictor_feature, group_feature):
+    plt.figure()
+    ax = sns.regplot(x=predictor_feature, y=response_feature, data=df)
+    plt.title('Regression on the Entire Data', fontsize=16, fontweight='bold')
+    plt.xlabel(f'{predictor_feature}', fontsize=14)
+    plt.ylabel(f'AVG({response_feature})', fontsize=14)
+    plt.figure()
+    data_groups, _ = get_groups(df, group_feature)
+    for data_group in data_groups:
+        sns.regplot(x=predictor_feature, y=response_feature, data=data_group)
+        plt.title(f'Regression on Groups of {group_feature}', fontsize=16, fontweight='bold')
+        plt.xlabel(f'{predictor_feature}', fontsize=14)
+        plt.ylabel(f'AVG({response_feature})', fontsize=14)
 
 
 
