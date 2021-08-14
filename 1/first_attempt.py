@@ -496,17 +496,17 @@ def build_regression_models(df, response_feature, predictor_feature):
 # plot the regression results
 def plot_reg_results(df, response_feature, predictor_feature, group_feature):
     plt.figure()
-    ax = sns.regplot(x=predictor_feature, y=response_feature, data=df)
+    sns.regplot(x=predictor_feature, y=response_feature, data=df)
     plt.title('Regression on the Entire Data', fontsize=16, fontweight='bold')
     plt.xlabel(f'{predictor_feature}', fontsize=14)
-    plt.ylabel(f'AVG({response_feature})', fontsize=14)
+    plt.ylabel(f'{response_feature}', fontsize=14)
     plt.figure()
     data_groups, _ = get_groups(df, group_feature)
     for data_group in data_groups:
         sns.regplot(x=predictor_feature, y=response_feature, data=data_group)
         plt.title(f'Regression on Groups of {group_feature}', fontsize=16, fontweight='bold')
         plt.xlabel(f'{predictor_feature}', fontsize=14)
-        plt.ylabel(f'AVG({response_feature})', fontsize=14)
+        plt.ylabel(f'{response_feature}', fontsize=14)
 
 
 
