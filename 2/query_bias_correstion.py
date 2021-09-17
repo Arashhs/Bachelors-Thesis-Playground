@@ -1,7 +1,6 @@
 
 import os
-import math
-import re
+import time
 
 import numpy as np
 import pandas as pd
@@ -460,7 +459,7 @@ class query_bias_correction:
     
     
     # plot the corrected query results
-    def plot_query_results(self, query, corrected_query, common_att, disagg_att, agg_att):
+    def plot_query_results(self, query, corrected_query, common_att, disagg_att, agg_att) -> None:
         """plot the given query results before and after correction
 
         Args:
@@ -523,7 +522,7 @@ class query_bias_correction:
         
         
     # Check whether Simpson's paradox is present and correct it using regression models if present
-    def detect_and_correct_query_bias_regression(self, query, agg_attributes, common_attributes, ignore_features, plot_results):
+    def detect_and_correct_query_bias_regression(self, query, agg_attributes, common_attributes, ignore_features, plot_results) -> str:
         """Check whether Simpson's paradox is present and correct it using regression models if present
 
         Args:
@@ -553,7 +552,7 @@ class query_bias_correction:
         
         
     # build regression models for testing if Simpson is present
-    def build_regression_models(self, df, response_feature, predictor_feature, ignore_features):
+    def build_regression_models(self, df, response_feature, predictor_feature, ignore_features) -> 'tuple[dict, dict]':
         """build a regression model using given inputs
 
         Args:
@@ -599,12 +598,12 @@ class query_bias_correction:
             else:
                 unbiased_degrees_dict[group_feature] = bias_degree
         # sns.regplot(x=predictor_feature, y=response_feature, data=df)
-        print(biased_degrees_dict)
+        # print(biased_degrees_dict)
         return biased_degrees_dict, unbiased_degrees_dict
     
     
     # encode dataset with categorical data
-    def encode_categorical_cols(self, df):
+    def encode_categorical_cols(self, df) -> pd.DataFrame:
         """encode dataset with categorical data
 
         Args:
@@ -629,7 +628,7 @@ class query_bias_correction:
             predictor_feature ([str]): The predictor feature for building the regression model
 
         Returns:
-            [OLS.params]: The resulting regression model parameters
+            [RegressionResults Parameters]: The resulting regression model parameters
         """
         Y = data[response_feature]
         X = data[predictor_feature]
@@ -647,7 +646,7 @@ class query_bias_correction:
     
     
     # build representation vector from regression model
-    def build_reg_represent_vector(self, slopes, predictor_feature):
+    def build_reg_represent_vector(self, slopes, predictor_feature) -> 'list[float]':
         """build representation vector from regression model
 
         Args:
@@ -668,7 +667,7 @@ class query_bias_correction:
     
     
     # plot the regression results
-    def plot_reg_results(self, df, response_feature, predictor_feature, group_feature):
+    def plot_reg_results(self, df, response_feature, predictor_feature, group_feature) -> None:
         """plot the regression results
 
         Args:
@@ -693,14 +692,63 @@ class query_bias_correction:
         
         
     # analyse dataset to see if Simpson's paradox is present
-    def analyse_dataset(self, query):
+    def analyse_dataset(self, query) -> None:
+        """Analyse dataset to see if Simpson's paradox is present
+
+        Args:
+            query ([str]): Input query string
+        """
         df = pd.read_sql(self.preprocess_query(query), self.sql_engine)
         df, categorical_cols = self.encode_categorical_cols(df)
         for agg_att in (set(df.columns) - set(categorical_cols)):
-            for common_att in df.columns:
-                if common_att != agg_att:
-                    for test_att in df.columns:
-                        if (test_att != agg_att) and (test_att != common_att):
-                            biased, score = self.check_for_bias(df, common_att, test_att, agg_att)
-                            if biased:
-                                print(self.check_for_bias(df, common_att, test_att, agg_att), f"agg:{agg_att}, common:{common_att}, test:{test_att}")
+            for common_att in set(df.columns) - {agg_att}:
+                for test_att in set(df.columns) - {agg_att, common_att}:
+                    biased, score = self.check_for_bias(df, common_att, test_att, agg_att)
+                    if biased:
+                        print(f"biased: {biased}, bias_degree: {score:.3f}, agg:{agg_att}, common:{common_att}, test:{test_att}")      
+
+
+    # analyse dataset (using regression method) to see if Simpson's paradox is present
+    def analyse_dataset_regression(self, query) -> None:
+        """Analyse dataset (using regression method) to see if Simpson's paradox is present
+
+        Args:
+            query ([str]): Input query string
+        """
+        df = pd.read_sql(self.preprocess_query(query), self.sql_engine)
+        df.columns = df.columns.str.lower()
+        df, categorical_cols = self.encode_categorical_cols(df)
+        for agg_att in (set(df.columns) - set(categorical_cols)):
+            for common_att in set(df.columns) - {agg_att}:
+                biased_degrees_dict, unbiased_degrees_dict = self.build_regression_models(df, agg_att, common_att, ignore_features=[])
+                if len(biased_degrees_dict) > 0:
+                    # Query was biased
+                    # Select the attribute for which the bias degree was highest
+                    best_test_att, highest_bias_degree = max(biased_degrees_dict.items(), key=lambda v: v[1])
+                    print(f"biased: True, bias_degree: {highest_bias_degree:.3f}, agg:{agg_att}, common:{common_att}, test:{best_test_att}")      
+
+
+
+    # compare the performance of the two proposed methods
+    def compare_performance(self, query) -> 'tuple[float, float, bool]':
+        """Compare the performance of the two proposed methods for a given query
+
+        Args:
+            query ([str]): Input query string
+
+        Returns:
+            [tuple[float, float, bool]]: (first method performance, second method performance, whether corrected query results of the both methods are the same)
+        """
+        start_time_first = time.perf_counter()
+        res1 = self.process_query(query, plot_results=False)
+        finish_time_first = time.perf_counter()
+        first_method_perf = finish_time_first - start_time_first
+        
+        start_time_sec = time.perf_counter()
+        res2 = self.process_query_regression(query, plot_results=False)
+        finish_time_sec = time.perf_counter()
+        second_method_perf = finish_time_sec - start_time_sec
+        
+        return first_method_perf, second_method_perf, res1 == res2
+        
+        
